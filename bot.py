@@ -183,7 +183,8 @@ async def generate_hash_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Usage: /generatehash <your-password>")
         return
     password = " ".join(context.args)
-    hashed_password = generate_password_hash(password)
+    # --- THIS IS THE CORRECTED LINE ---
+    hashed_password = generate_password_hash(password, method='scrypt')
     reply_text = (
         "Your secure password hash is:\n\n"
         f"`{hashed_password}`\n\n"
