@@ -17,7 +17,7 @@ RUN chmod +x ./start.sh
 EXPOSE 8080
 
 # Set python to print logs immediately
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONUNBUFFERED=1
 
 # Run the start.sh script when the container launches
 CMD ["./start.sh"]
