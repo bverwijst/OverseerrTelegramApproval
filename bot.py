@@ -41,44 +41,50 @@ def save_ids(filename, ids):
 admins = load_ids(ADMINS_FILE)
 users = load_ids(USERS_FILE)
 
-def get_tmdb_link(media_type, tmdb_id):
-    if not tmdb_id:
-        return ""
-    if media_type == "movie":
-        return f"https://www.themoviedb.org/movie/{tmdb_id}"
-    elif media_type == "tv":
-        return f"https://www.themoviedb.org/tv/{tmdb_id}"
-    return ""
-
-def get_imdb_link(imdb_id):
-    if imdb_id:
-        return f"https://www.imdb.com/title/{imdb_id}"
-    return ""
+def fetch_media_details(media_type, tmdb_id):
+    if not tmdb_id or not media_type:
+        return None
+    url = f"{OVERSEERR_API_URL}/movie/{tmdb_id}" if media_type == "movie" else f"{OVERSEERR_API_URL}/tv/{tmdb_id}"
+    headers = {"X-Api-Key": OVERSEERR_API_KEY}
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"Error fetching media details: {e}")
+        return None
 
 async def send_request_message(data):
+    # Get basic info from webhook
     media = data.get("media", {})
     media_type = media.get("media_type", "unknown")
-    title = data.get("title") or data.get("subject", "Unknown Title")
-    overview = media.get("overview", "")
+    tmdb_id = media.get("tmdbId")
+    title = data.get("subject", "Unknown Title")
     poster_url = data.get("image", None)
     requester = data.get("request", {}).get("requestedBy_username", "Unknown User")
-    imdb_id = media.get("imdbId", "")
+    year = ""
+    if "releaseDate" in media and media["releaseDate"]:
+        year = f" ({media['releaseDate'][:4]})"
+
+    # Fetch full details from Overseerr API
+    details = fetch_media_details(media_type, tmdb_id) if tmdb_id else None
+
+    # Extract details
+    overview = details.get("overview", "") if details else ""
     imdb_score = None
+    if details:
+        # Try to get IMDb score from ratings, fallback to TMDB score
+        ratings = details.get("ratings", {})
+        if ratings and "imdb" in ratings and "value" in ratings["imdb"]:
+            imdb_score = ratings["imdb"]["value"]
+        elif "voteAverage" in details and details["voteAverage"]:
+            imdb_score = details["voteAverage"]
 
-    # Try to get IMDb score from ratings, fallback to TMDB score
-    ratings = media.get("ratings", {})
-    if ratings and "imdb" in ratings and "value" in ratings["imdb"]:
-        imdb_score = ratings["imdb"]["value"]
-    elif "voteAverage" in media:
-        imdb_score = media["voteAverage"]
-
-    # Emoji for movie or TV
     emoji = "🎬" if media_type == "movie" else "📺"
 
-    # Build message
     message = (
         f"{emoji} *New {'Movie' if media_type == 'movie' else 'TV Show'} Request!*\n"
-        f"*Title:* {title}\n"
+        f"*Title:* {title}{year}\n"
     )
     if overview:
         message += f"*Synopsis:* {overview}\n"
