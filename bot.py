@@ -6,7 +6,6 @@ from flask import Flask, request, abort
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
 import requests
-# --- UPDATED: Import both hashing functions ---
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from dotenv import load_dotenv
@@ -44,7 +43,7 @@ def save_ids(filename, ids):
 admins = load_ids(ADMINS_FILE)
 users = load_ids(USERS_FILE)
 
-# --- Overseerr API Functions (unchanged) ---
+# --- Overseerr API Functions ---
 def fetch_media_details(media_type, tmdb_id):
     if not tmdb_id or not media_type: return None
     url = f"{OVERSEERR_API_URL}/{media_type}/{tmdb_id}"
@@ -68,7 +67,7 @@ def approve_or_deny_request(request_id, action):
         logging.error(f"Error approving/denying request: {e}")
         return False
 
-# --- Core Telegram Message Functions (unchanged) ---
+# --- Core Telegram Message Functions ---
 async def send_request_message(data):
     media = data.get("media", {})
     media_type = media.get("media_type", "unknown")
@@ -118,7 +117,7 @@ async def send_request_message(data):
     else:
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode="Markdown", reply_markup=reply_markup)
 
-# --- Flask Webhook Routes (unchanged) ---
+# --- Flask Webhook Routes ---
 @app.route("/webhook", methods=["POST"])
 def webhook():
     if request.headers.get("Authorization") != f"Bearer {WEBHOOK_SECRET}": abort(401)
@@ -176,19 +175,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"❌ Failed to {action} **{title}**. There might be an issue with Overseerr."
         await query.edit_message_caption(caption=text, reply_markup=None, parse_mode="Markdown")
 
-# --- NEW: Command to generate a password hash ---
 async def generate_hash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != 'private':
         await update.message.reply_text("For security, please send this command as a private message to the bot.")
         return
-
     if not context.args:
         await update.message.reply_text("Usage: /generatehash <your-password>")
         return
-    
     password = " ".join(context.args)
     hashed_password = generate_password_hash(password)
-    
     reply_text = (
         "Your secure password hash is:\n\n"
         f"`{hashed_password}`\n\n"
@@ -197,16 +192,33 @@ async def generate_hash_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(reply_text, parse_mode="Markdown")
 
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type != 'private':
+        await update.message.reply_text("For security, please use the /login command in a private message to the bot.")
+        return
     user_id = update.effective_user.id
+    password_attempt = " ".join(context.args)
     if not ADMIN_PASSWORD_HASH:
         await update.message.reply_text("❌ Admin password has not been set by the administrator.")
         return
-    if not context.args or not check_password_hash(ADMIN_PASSWORD_HASH, " ".join(context.args)):
+    if not password_attempt or not check_password_hash(ADMIN_PASSWORD_HASH, password_attempt):
         await update.message.reply_text("❌ Incorrect password.")
         return
     admins.add(user_id)
     save_ids(ADMINS_FILE, admins)
-    await update.message.reply_text("✅ You are now an admin!")
+    await update.message.reply_text("✅ You are now an admin! You can now use admin commands in the group channel.")
+
+async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in admins:
+        admins.remove(user_id)
+        save_ids(ADMINS_FILE, admins)
+        await update.message.reply_text("✅ You have been logged out as admin.")
+    elif user_id in users:
+        users.remove(user_id)
+        save_ids(USERS_FILE, users)
+        await update.message.reply_text("✅ You have been logged out as user.")
+    else:
+        await update.message.reply_text("You are not logged in.")
 
 async def adduser_reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -226,7 +238,6 @@ async def adduser_reply_command(update: Update, context: ContextTypes.DEFAULT_TY
     save_ids(USERS_FILE, users)
     await update.message.reply_text(f"✅ User {new_user_name} ({new_user_id}) has been added.")
 
-# ... (other commands are unchanged) ...
 async def adduser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in admins:
@@ -243,28 +254,6 @@ async def adduser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ User {new_user_id} added.")
     except Exception:
         await update.message.reply_text("Invalid user_id.")
-
-async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Ensure this command is only used in a private chat
-    if update.message.chat.type != 'private':
-        await update.message.reply_text("For security, please use the /login command in a private message to the bot.")
-        return
-
-    user_id = update.effective_user.id
-    password_attempt = " ".join(context.args)
-
-    if not ADMIN_PASSWORD_HASH:
-        await update.message.reply_text("❌ Admin password has not been set by the administrator.")
-        return
-    
-    # Check if a password was provided and if it matches the hash
-    if not password_attempt or not check_password_hash(ADMIN_PASSWORD_HASH, password_attempt):
-        await update.message.reply_text("❌ Incorrect password.")
-        return
-        
-    admins.add(user_id)
-    save_ids(ADMINS_FILE, admins)
-    await update.message.reply_text("✅ You are now an admin! You can now use admin commands in the group channel.")
 
 async def removeuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -306,7 +295,6 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Main Application Startup ---
 def start_telegram_bot():
     app_telegram = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    # --- UPDATED: Register the new /generatehash command ---
     app_telegram.add_handler(CommandHandler("generatehash", generate_hash_command))
     app_telegram.add_handler(CommandHandler("add", adduser_reply_command))
     app_telegram.add_handler(CallbackQueryHandler(button_handler))
