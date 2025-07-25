@@ -2,14 +2,26 @@ import os
 import logging
 import asyncio
 import json
+import httpx
+from datetime import datetime, timedelta
 from flask import Flask, request, abort
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
-import requests
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from dotenv import load_dotenv
 load_dotenv()
+
+# --- 1. Improved Configuration Handling & Validation ---
+# Fail fast if critical environment variables are missing.
+REQUIRED_VARS = [
+    "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "OVERSEERR_API_URL",
+    "OVERSEERR_API_KEY", "WEBHOOK_SECRET", "ADMIN_PASSWORD_HASH"
+]
+missing_vars = [var for var in REQUIRED_VARS if not os.getenv(var)]
+if missing_vars:
+    logging.critical(f"FATAL ERROR: Missing required environment variables: {', '.join(missing_vars)}")
+    exit(1)
 
 # --- Environment Variables ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -43,26 +55,29 @@ def save_ids(filename, ids):
 admins = load_ids(ADMINS_FILE)
 users = load_ids(USERS_FILE)
 
-# --- Overseerr API Functions ---
-def fetch_media_details(media_type, tmdb_id):
+# --- 2. Asynchronous API Calls with httpx ---
+# Switched from synchronous `requests` to asynchronous `httpx` for non-blocking I/O.
+async def fetch_media_details(media_type, tmdb_id):
     if not tmdb_id or not media_type: return None
     url = f"{OVERSEERR_API_URL}/{media_type}/{tmdb_id}"
     headers = {"X-Api-Key": OVERSEERR_API_KEY}
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            return response.json()
     except Exception as e:
         logging.error(f"Error fetching media details: {e}")
         return None
 
-def approve_or_deny_request(request_id, action):
+async def approve_or_deny_request(request_id, action):
     url = f"{OVERSEERR_API_URL}/request/{request_id}/{action}"
     headers = {"X-Api-Key": OVERSEERR_API_KEY}
     try:
-        response = requests.post(url, headers=headers)
-        response.raise_for_status()
-        return True
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers)
+            response.raise_for_status()
+            return True
     except Exception as e:
         logging.error(f"Error approving/denying request: {e}")
         return False
@@ -75,7 +90,7 @@ async def send_request_message(data):
     poster_url = data.get("image", None)
     requester = data.get("request", {}).get("requestedBy_username", "Unknown User")
 
-    details = fetch_media_details(media_type, tmdb_id)
+    details = await fetch_media_details(media_type, tmdb_id) # Added await
     if not details:
         logging.error(f"Could not fetch details for media with tmdbId: {tmdb_id}")
         return
@@ -163,7 +178,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try: original_requester = line.split(':', 1)[1].strip()
                 except IndexError: pass
 
-    success = approve_or_deny_request(request_id, action)
+    success = await approve_or_deny_request(request_id, action) # Added await
     
     if success:
         action_past_tense = "approved" if action == "approve" else "denied"
@@ -176,21 +191,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_caption(caption=text, reply_markup=None, parse_mode="Markdown")
 
 async def generate_hash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Use effective_message to safely handle new messages, edited messages, etc.
     message = update.effective_message
-    
-    # Add a defensive check in case there's no message at all
     if not message:
-        logging.error("generate_hash_command received an update with no effective_message.")
+        logging.warning("generate_hash_command received an update with no effective_message.")
         return
-
     if message.chat.type != 'private':
         await message.reply_text("For security, please send this command as a private message to the bot.")
         return
     if not context.args:
         await message.reply_text("Usage: /generatehash <your-password>")
         return
-        
     password = " ".join(context.args)
     hashed_password = generate_password_hash(password, method='scrypt')
     reply_text = (
@@ -200,18 +210,46 @@ async def generate_hash_command(update: Update, context: ContextTypes.DEFAULT_TY
     )
     await message.reply_text(reply_text, parse_mode="Markdown")
 
+# --- 3. Login Command with Rate Limiting ---
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    now = datetime.now()
+
+    # Initialize attempts dictionary if it doesn't exist
+    if 'login_attempts' not in context.bot_data:
+        context.bot_data['login_attempts'] = {}
+    
+    # Get user's attempt history, or create a new one
+    user_attempts = context.bot_data['login_attempts'].get(user_id, {'count': 0, 'time': now})
+    
+    # Reset counter if the last attempt was more than 5 minutes ago
+    if now - user_attempts['time'] > timedelta(minutes=5):
+        user_attempts = {'count': 0, 'time': now}
+
+    # Block user if they have too many recent failed attempts
+    if user_attempts['count'] >= 5:
+        await update.message.reply_text("❌ Too many failed login attempts. Please try again in 5 minutes.")
+        return
+
     if update.message.chat.type != 'private':
         await update.message.reply_text("For security, please use the /login command in a private message to the bot.")
         return
-    user_id = update.effective_user.id
+    
     password_attempt = " ".join(context.args)
     if not ADMIN_PASSWORD_HASH:
         await update.message.reply_text("❌ Admin password has not been set by the administrator.")
         return
+    
     if not password_attempt or not check_password_hash(ADMIN_PASSWORD_HASH, password_attempt):
+        # On failure, increment the attempt counter and update the timestamp
+        user_attempts['count'] += 1
+        user_attempts['time'] = now
+        context.bot_data['login_attempts'][user_id] = user_attempts
         await update.message.reply_text("❌ Incorrect password.")
         return
+    
+    # On success, clear the user's attempt history and log them in
+    context.bot_data['login_attempts'].pop(user_id, None)
     admins.add(user_id)
     save_ids(ADMINS_FILE, admins)
     await update.message.reply_text("✅ You are now an admin! You can now use admin commands in the group channel.")
@@ -301,9 +339,21 @@ async def listadmins_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot is running and healthy!")
 
+# --- 4. Global Error Handler ---
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log all uncaught exceptions."""
+    logging.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+    # You could optionally add a notification to yourself here, e.g.:
+    # await context.bot.send_message(chat_id=YOUR_PERSONAL_CHAT_ID, text=f"Bot encountered an error: {context.error}")
+
 # --- Main Application Startup ---
 def start_telegram_bot():
     app_telegram = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Register the global error handler
+    app_telegram.add_error_handler(error_handler)
+    
+    # Register all your command and callback handlers
     app_telegram.add_handler(CommandHandler("generatehash", generate_hash_command))
     app_telegram.add_handler(CommandHandler("add", adduser_reply_command))
     app_telegram.add_handler(CallbackQueryHandler(button_handler))
@@ -314,6 +364,7 @@ def start_telegram_bot():
     app_telegram.add_handler(CommandHandler("listusers", listusers_command))
     app_telegram.add_handler(CommandHandler("listadmins", listadmins_command))
     app_telegram.add_handler(CommandHandler("health", health_command))
+    
     app_telegram.run_polling()
 
 if __name__ == "__main__":

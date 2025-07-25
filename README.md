@@ -7,13 +7,14 @@ Admins can manage who is allowed to approve/deny requests, all from Telegram.
 
 ## Features
 
-- Instant notifications for new Overseerr requests
-- Approve or deny requests directly from Telegram
-- Only approved users (added by an admin) can approve/deny
-- Admins can add/remove users via Telegram commands
-- Persistent admin/user lists (survive restarts)
-- Healthcheck endpoint and command
-- Easy Docker deployment
+- **Real-time Notifications:** Get instant Telegram messages for new Overseerr requests.
+- **Interactive Buttons:** Approve or deny requests directly from Telegram.
+- **Rich Media Information:** Notifications include titles, synopses, ratings, and links (IMDb/TMDb).
+- **Secure Admin System:** Password-protected login for admins with brute-force protection.
+- **User Management:** Admins can add/remove authorized users who can approve/deny requests.
+- **High Performance:** Built with an asynchronous core (`httpx`) to handle multiple requests without blocking.
+- **Robust & Resilient:** Features a global error handler and a Docker healthcheck to ensure high availability.
+- **Easy Deployment:** Runs in a Docker container with a simple setup.
 
 ## Quick Start (Docker Compose)
 
@@ -40,6 +41,7 @@ Admins can manage who is allowed to approve/deny requests, all from Telegram.
         ADMINS_FILE: "data/admins.json"
         USERS_FILE: "data/users.json"
    ```
+> **IMPORTANT:** When you paste your `ADMIN_PASSWORD_HASH` into the `.env` file, you **must** wrap it in single quotes (`'`). This is because the hash contains special characters (`$`) that will otherwise break the configuration.
 
 2. **Start the bot:**
 ```docker compose up -d```
@@ -164,17 +166,24 @@ You can use this bot in a group chat instead of (or in addition to) direct messa
 
 ## Environment Variables
 
-| **Variable**       | **Description**                                             |
-|--------------------|-------------------------------------------------------------|
-| TELEGRAM_BOT_TOKEN | Your Telegram bot token                                     |
-| TELEGRAM_CHAT_ID   | Your Telegram chat ID (group or user)                       |
-| OVERSEERR_API_URL  | Your Overseerr API URL (e.g., http://overseerr:5055/api/v1) |
-| OVERSEERR_API_KEY  | Your Overseerr API key                                      |
-| WEBHOOK_SECRET     | Secret for webhook authentication (must match Overseerr)    |
-| PORT               | Port to run the bot on (default: 8080)                      |
-| ADMIN_PASSWORD_HASH| Your Admin password                                         |
-| ADMINS_FILE        | Persistent storage for Admin ID's (data/admins.json)        |
-| USERS_FILE         | Persistent storage for User ID's (data/users.json)          |
+| **Variable**       | **Description**                                                                                              | **Example**
+|--------------------|--------------------------------------------------------------------------------------------------------------|----------------------------------------------|
+| TELEGRAM_BOT_TOKEN | Your Telegram bot's token from BotFather.                                                                    | '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11'  |
+| TELEGRAM_CHAT_ID   | The ID of the Telegram chat/group where notifications will be sent.                                          | -1001234567890                               |
+| OVERSEERR_API_URL  | The full URL to your Overseerr API.                                                                          | http://192.168.1.100:5055/api/v1             |
+| OVERSEERR_API_KEY  | Your Overseerr API key                                                                                       | a1b2c3d4-e5f6-7890-1234-567890abcdef         |
+| WEBHOOK_SECRET     | A long, random secret string for securing the webhook endpoint.                                              | my-super-secret-webhook-string               |
+| PORT               | The port the internal Flask web server will listen on. Must match the internal port in `docker-compose.yml`. | 8080                                         |
+| ADMIN_PASSWORD_HASH| The hashed password for the first admin. Use `/generatehash` in a PM to the bot to get this.                 | 'scrypt:32768:8:1$Pt...b4eb'                 |
+| ADMINS_FILE        | (Optional) Path to the file storing admin IDs.                                                               | data/admins.json                             |
+| USERS_FILE         | (Optional) Path to the file storing user IDs.                                                                | data/users.json                              |
+
+## Security
+
+- The webhook endpoint is protected by a bearer token (`WEBHOOK_SECRET`).
+- Admin commands are restricted to users who have logged in with the admin password.
+- The `/generatehash` and `/login` commands only work in private messages to the bot for privacy.
+- **Brute-Force Protection:** The `/login` command is rate-limited to prevent password-guessing attacks. After 5 failed attempts, a user is temporarily locked out.
 
 ## Logging
 This bot is designed to be foolproof. On startup, it checks all required environment variables:

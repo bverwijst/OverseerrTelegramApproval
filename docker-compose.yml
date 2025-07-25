@@ -4,7 +4,7 @@ services:
     image: xnotorious/overseerr-telegram-approver
     restart: unless-stopped
     volumes:
-      - ./data:app/data
+      - ./data:/app/data
     ports:
       - "8080:8080"
     environment:
@@ -14,6 +14,12 @@ services:
       OVERSEERR_API_KEY: "your-overseerr-api-key"
       WEBHOOK_SECRET: "your-webhook-secret"
       PORT: 8080
-      ADMIN_PASSWORD_HASH: "your-hashed-admin-password" # See README how to get your hashed password
+      ADMIN_PASSWORD_HASH: 'your-hashed-admin-password' # See README how to get your hashed password
       ADMINS_FILE: "data/admins.json"
       USERS_FILE: "data/users.json"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 1m30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
