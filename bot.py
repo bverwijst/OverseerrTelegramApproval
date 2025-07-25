@@ -176,21 +176,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_caption(caption=text, reply_markup=None, parse_mode="Markdown")
 
 async def generate_hash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type != 'private':
-        await update.message.reply_text("For security, please send this command as a private message to the bot.")
+    # Use effective_message to safely handle new messages, edited messages, etc.
+    message = update.effective_message
+    
+    # Add a defensive check in case there's no message at all
+    if not message:
+        logging.error("generate_hash_command received an update with no effective_message.")
+        return
+
+    if message.chat.type != 'private':
+        await message.reply_text("For security, please send this command as a private message to the bot.")
         return
     if not context.args:
-        await update.message.reply_text("Usage: /generatehash <your-password>")
+        await message.reply_text("Usage: /generatehash <your-password>")
         return
+        
     password = " ".join(context.args)
-    # --- THIS IS THE CORRECTED LINE ---
     hashed_password = generate_password_hash(password, method='scrypt')
     reply_text = (
         "Your secure password hash is:\n\n"
         f"`{hashed_password}`\n\n"
         "Copy this entire hash and set it as the `ADMIN_PASSWORD_HASH` environment variable for the bot, then restart it."
     )
-    await update.message.reply_text(reply_text, parse_mode="Markdown")
+    await message.reply_text(reply_text, parse_mode="Markdown")
 
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != 'private':
