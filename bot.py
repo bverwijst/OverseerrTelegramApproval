@@ -23,7 +23,17 @@ USERS_FILE = os.getenv("USERS_FILE", "users.json")
 # --- Initializations ---
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+
+# --- THIS IS THE NEW LINE ---
+# Set the logging level for the httpx library to WARNING to silence the INFO spam
+logging.getLogger("httpx").setLevel(logging.WARNING)
+# --- END OF NEW LINE ---
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 
 # --- Helper Functions for User/Admin Management ---
 def load_ids(filename):
@@ -120,8 +130,6 @@ def webhook():
 
     if notification_type == "MEDIA_PENDING":
         try:
-            # --- THIS IS THE KEY CHANGE ---
-            # Run the async function in its own event loop. No need for global variables.
             asyncio.run(send_request_message(data))
             logging.info("Successfully processed MEDIA_PENDING notification.")
         except Exception as e:
@@ -182,7 +190,6 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_ids(ADMINS_FILE, admins)
     await update.message.reply_text("✅ You are now an admin!")
 
-# ... (other command handlers like logout, adduser, etc. are unchanged) ...
 async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in admins:
@@ -264,9 +271,6 @@ def start_telegram_bot():
     app_telegram.add_handler(CommandHandler("health", health_command))
     app_telegram.run_polling()
 
-# --- This block is no longer needed for starting the app ---
-# The start.sh script now handles running Gunicorn and the bot.
-# It's kept here in case you ever want to run the bot directly for local testing.
 if __name__ == "__main__":
     print("Starting Telegram bot directly for local testing...")
     start_telegram_bot()
