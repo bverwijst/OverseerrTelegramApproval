@@ -55,43 +55,47 @@ def fetch_media_details(media_type, tmdb_id):
         return None
 
 async def send_request_message(data):
-    # Get basic info from webhook
+    # Get basic info from webhook to find the media
     media = data.get("media", {})
     media_type = media.get("media_type", "unknown")
     tmdb_id = media.get("tmdbId")
-    title = data.get("subject", "Unknown Title")
     poster_url = data.get("image", None)
     requester = data.get("request", {}).get("requestedBy_username", "Unknown User")
-    year = ""
-    if "releaseDate" in media and media["releaseDate"]:
-        year = f" ({media['releaseDate'][:4]})"
 
-    # Fetch full details from Overseerr API
+    # The webhook payload is minimal, so we must fetch full details from the API
     details = fetch_media_details(media_type, tmdb_id) if tmdb_id else None
 
-    # Extract details
-    overview = details.get("overview", "") if details else ""
-    imdb_score = None
-    if details:
-        # Try to get IMDb score from ratings, fallback to TMDB score
-        ratings = details.get("ratings", {})
-        if ratings and "imdb" in ratings and "value" in ratings["imdb"]:
-            imdb_score = ratings["imdb"]["value"]
-        elif "voteAverage" in details and details["voteAverage"]:
-            imdb_score = details["voteAverage"]
+    # If we couldn't fetch details, we can't build a proper message
+    if not details:
+        logging.error(f"Could not fetch details for media with tmdbId: {tmdb_id}")
+        return
+
+    # --- CORRECTED SECTION ---
+    # Extract rich details from the full API response
+    # Movie titles are in 'title', TV show titles are in 'name'
+    title = details.get("title") if media_type == "movie" else details.get("name", "Unknown Title")
+    
+    # Use the full overview from the details
+    overview = details.get("overview", "No synopsis available.")
+    
+    # Get year from 'releaseDate' (movies) or 'firstAirDate' (tv)
+    release_date = details.get("releaseDate") if media_type == "movie" else details.get("firstAirDate")
+    year = f" ({release_date[:4]})" if release_date and len(release_date) >= 4 else ""
+
+    # Get score from 'voteAverage' (this is the TMDb score)
+    score = details.get("voteAverage")
+    score_text = f"{score:.1f}/10 (TMDb)" if score is not None and score > 0 else "Not Rated"
+    # --- END CORRECTED SECTION ---
 
     emoji = "🎬" if media_type == "movie" else "📺"
 
     message = (
-        f"{emoji} *New {'Movie' if media_type == 'movie' else 'TV Show'} Request!*\n"
+        f"{emoji} *New {'Movie' if media_type == 'movie' else 'TV Show'} Request!*\n\n"
         f"*Title:* {title}{year}\n"
+        f"*Synopsis:* {overview}\n\n"
+        f"*Score:* {score_text}\n"
+        f"*Requester:* {requester}\n"
     )
-    if overview:
-        message += f"*Synopsis:* {overview}\n"
-    if imdb_score is not None:
-        message += f"*Score:* {imdb_score}/10\n"
-    if requester:
-        message += f"*Requester:* {requester}\n"
 
     keyboard = [
         [
