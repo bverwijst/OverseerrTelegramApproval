@@ -10,23 +10,56 @@ import requests
 from dotenv import load_dotenv
 load_dotenv()
 
+# --- Foolproof Environment Variable Checking ---
+def check_env(var, name, is_secret=False):
+    if var is None or var == "":
+        logging.critical(f"Environment variable {name} is MISSING!")
+        return False
+    placeholder_values = [
+        f"your-{name.lower().replace('_', '-')}",
+        "changeme",
+        "<changeme>",
+        "<your-value-here>",
+        "replace-me"
+    ]
+    if str(var).lower() in placeholder_values:
+        logging.error(f"Environment variable {name} is set to a placeholder value ({var!r})! Please set a real value.")
+        return False
+    logging.info(f"{name} loaded: {'***' if is_secret else var}")
+    return True
+
+# --- Load and Check Environment Variables ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OVERSEERR_API_URL = os.getenv("OVERSEERR_API_URL")
 OVERSEERR_API_KEY = os.getenv("OVERSEERR_API_KEY")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-PORT = int(os.getenv("PORT", 8080))
+PORT = os.getenv("PORT", "8080")
+
+logging.basicConfig(level=logging.INFO)
+
+all_env_ok = True
+all_env_ok &= check_env(TELEGRAM_BOT_TOKEN, "TELEGRAM_BOT_TOKEN", is_secret=True)
+all_env_ok &= check_env(TELEGRAM_CHAT_ID, "TELEGRAM_CHAT_ID")
+all_env_ok &= check_env(OVERSEERR_API_URL, "OVERSEERR_API_URL")
+all_env_ok &= check_env(OVERSEERR_API_KEY, "OVERSEERR_API_KEY", is_secret=True)
+all_env_ok &= check_env(WEBHOOK_SECRET, "WEBHOOK_SECRET", is_secret=True)
+all_env_ok &= check_env(PORT, "PORT")
+
+if not all_env_ok:
+    logging.critical("Startup aborted: One or more required environment variables are missing or invalid. Please check the logs above for details.")
+    exit(1)
+
+PORT = int(PORT)
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 app = Flask(__name__)
-
-logging.basicConfig(level=logging.INFO)
 
 # We'll store the event loop here
 telegram_event_loop = None
 
 async def send_request_message(data):
-    print("send_request_message called with:", data)  # Debug print
+    logging.info(f"send_request_message called with: {data}")
 
     media_type = data.get("media", {}).get("media_type", "unknown")
     title = data.get("subject", "Unknown Title")
@@ -66,34 +99,43 @@ async def send_request_message(data):
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    if request.headers.get("Authorization") != f"Bearer {WEBHOOK_SECRET}":
+    auth_header = request.headers.get("Authorization")
+    expected_header = f"Bearer {WEBHOOK_SECRET}"
+    if auth_header != expected_header:
+        if auth_header is None:
+            logging.warning("Webhook received with MISSING Authorization header!")
+        else:
+            logging.warning(f"Webhook received with INVALID secret! Got: {auth_header!r}, expected: {expected_header!r}")
         abort(401)
     data = request.json
-    print("Webhook received:", data)  # Debug print
+    logging.info(f"Webhook received: {data}")
 
     if data.get("type") == "TEST_NOTIFICATION":
-        print("Test notification received")
+        logging.info("Test notification received")
         return "Test notification received!", 200
 
     if (
         data.get("notification_type") == "MEDIA_PENDING"
         or data.get("event") in ["New Movie Request", "New TV Request"]
     ):
-        print("MEDIA_PENDING or New Request event received")
-        # Use the stored event loop to run the coroutine
+        logging.info("MEDIA_PENDING or New Request event received")
         global telegram_event_loop
         if telegram_event_loop:
             asyncio.run_coroutine_threadsafe(send_request_message(data), telegram_event_loop)
         else:
-            print("Telegram event loop not set!")
+            logging.error("Telegram event loop not set!")
     else:
-        print("Event not handled:", data.get("event"))
+        logging.info(f"Event not handled: {data.get('event')}")
     return "OK"
 
 def approve_or_deny_request(request_id, action):
     url = f"{OVERSEERR_API_URL}/request/{request_id}/{action}"
     headers = {"X-Api-Key": OVERSEERR_API_KEY}
     response = requests.post(url, headers=headers)
+    if response.ok:
+        logging.info(f"Request {request_id} {action}d successfully via Overseerr API.")
+    else:
+        logging.error(f"Failed to {action} request {request_id} via Overseerr API. Status: {response.status_code}, Response: {response.text}")
     return response.ok
 
 async def button_handler(update, context: ContextTypes.DEFAULT_TYPE):

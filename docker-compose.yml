@@ -1,0 +1,14 @@
+services:
+  overseerrtelegramapprover:
+    container_name: overseerr-telegram-approver
+    image: xnotorious/overseerr-telegram-approver
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TELEGRAM_BOT_TOKEN: "your-telegram-bot-token"
+      TELEGRAM_CHAT_ID: "your-telegram-chat-id"
+      OVERSEERR_API_URL: "http://your-overseerr-url/api/v1"
+      OVERSEERR_API_KEY: "your-overseerr-api-key"
+      WEBHOOK_SECRET: "your-webhook-secret"
+      PORT: 8080
