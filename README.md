@@ -54,11 +54,11 @@ docker run -d \
   -e OVERSEERR_API_URL=http://your-overseerr-url/api/v1 \
   -e OVERSEERR_API_KEY=your-overseerr-api-key \
   -e WEBHOOK_SECRET=your-webhook-secret \
-  -e PORT=8080 \
-  -e ADMIN_PASSWORD=your-admin-password \
-  -e ADMINS_FILE=data/admins.json \
-  -e USERS_FILE=data/users.json \
+  -e ADMIN_PASSWORD_HASH=your-generated-password-hash \
+  -e ADMINS_FILE=/app/data/admins.json \
+  -e USERS_FILE=/app/data/users.json \
   -p 8080:8080 \
+  -v ./data:/app/data \
   xnotorious/overseerr-telegram-approver
 ```
 
@@ -76,34 +76,54 @@ docker run -d \
 > **Note**: The ```WEBHOOK_SECRET``` in your Docker environment and the secret in Overseerr **must match exactly**
 
 ## Usage
-**1. Log in as an Admin**
-In Telegram, send your bot the command:
-```/login <admin_password>```
-You’ll get a confirmation:
-✅ You are now an admin!
 
-**2. Add Users**
-To allow someone to approve/deny requests, you (as admin) must add their Telegram user ID:
-```/adduser <user_id>```
+### 1. Set Your Admin Password (Easy Method)
 
-**3. Remove Users**
-To remove a user’s access:
-```/removeuser <user_id>```
+This bot uses a secure hashed password so your actual password is never stored.
 
-**4. List Users/Admins**
-- List users: ```/listusers```
-- List admins: ```/listadmins```
+1.  Start the bot container for the first time.
+2.  Send your bot a **private message** (not in a group) with your desired password. For example:
+    `/generatehash my super secret password`
+3.  The bot will reply with a long string of text (the hash). Copy this entire string.
+4.  Stop the bot container.
+5.  In your `.env` file or `docker run` command, set the copied hash as the value for the `ADMIN_PASSWORD_HASH` environment variable.
+6.  Restart the bot container. It is now securely configured.
 
-**5. Approve/Deny Requests**
-When a new request comes in, the bot will post it in your Telegram chat with Approve/Deny buttons.
-Only users or admins can approve/deny.
+### 2. Log in as an Admin
 
-**6. Healthcheck**
-HTTP: Visit ```http://<your-server>:8080/health```
-Telegram: ```/health```
+In Telegram, send your bot the command with your **plaintext** password:
+`/login my super secret password`
 
-**7. Log Out**
-```/logout```
+You’ll get a confirmation: `✅ You are now an admin!`
+
+### 3. Add Users
+
+The easiest way to add a user is to have them send a message in the chat, then reply to their message with the `/add` command.
+
+1.  Ask the user to send any message (e.g., "add me").
+2.  As an admin, reply directly to their message and type: `/add`
+3.  The bot will confirm that the user has been added.
+
+Alternatively, you can still add a user by their numerical Telegram ID:
+`/adduser <user_id>`
+
+### 4. Manage Users and Admins
+
+*   **Remove a user:** `/removeuser <user_id>`
+*   **List authorized users:** `/listusers`
+*   **List admins:** `/listadmins`
+
+### 5. Approve/Deny Requests
+
+When a new request comes in, the bot will post it in your Telegram chat with Approve/Deny buttons and links to IMDb/TMDb. Only authorized users or admins can approve/deny.
+
+The final confirmation message will show what was requested, who requested it, and who took action on it.
+
+### 6. Healthcheck & Logout
+
+*   **Check bot health (HTTP):** `http://<your-server>:8080/health`
+*   **Check bot health (Telegram):** `/health`
+*   **Log out:** `/logout`
 
 ## How to Get a Telegram User ID
 

@@ -6,6 +6,8 @@ from flask import Flask, request, abort
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
 import requests
+# --- UPDATED: Import both hashing functions ---
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -16,44 +18,36 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OVERSEERR_API_URL = os.getenv("OVERSEERR_API_URL")
 OVERSEERR_API_KEY = os.getenv("OVERSEERR_API_KEY")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "adminpass")
-ADMINS_FILE = os.getenv("ADMINS_FILE", "admins.json")
-USERS_FILE = os.getenv("USERS_FILE", "users.json")
+ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH")
+ADMINS_FILE = os.getenv("ADMINS_FILE", "data/admins.json")
+USERS_FILE = os.getenv("USERS_FILE", "data/users.json")
 
 # --- Initializations ---
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 app = Flask(__name__)
-
-# --- THIS IS THE NEW LINE ---
-# Set the logging level for the httpx library to WARNING to silence the INFO spam
 logging.getLogger("httpx").setLevel(logging.WARNING)
-# --- END OF NEW LINE ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-
-# --- Helper Functions for User/Admin Management ---
+# --- Helper Functions ---
 def load_ids(filename):
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     if os.path.exists(filename):
         with open(filename, "r") as f:
             return set(json.load(f))
     return set()
 
 def save_ids(filename, ids):
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     with open(filename, "w") as f:
         json.dump(list(ids), f)
 
 admins = load_ids(ADMINS_FILE)
 users = load_ids(USERS_FILE)
 
-# --- Overseerr API Functions ---
+# --- Overseerr API Functions (unchanged) ---
 def fetch_media_details(media_type, tmdb_id):
-    if not tmdb_id or not media_type:
-        return None
-    url = f"{OVERSEERR_API_URL}/movie/{tmdb_id}" if media_type == "movie" else f"{OVERSEERR_API_URL}/tv/{tmdb_id}"
+    if not tmdb_id or not media_type: return None
+    url = f"{OVERSEERR_API_URL}/{media_type}/{tmdb_id}"
     headers = {"X-Api-Key": OVERSEERR_API_KEY}
     try:
         response = requests.get(url, headers=headers)
@@ -74,7 +68,7 @@ def approve_or_deny_request(request_id, action):
         logging.error(f"Error approving/denying request: {e}")
         return False
 
-# --- Core Telegram Message Functions ---
+# --- Core Telegram Message Functions (unchanged) ---
 async def send_request_message(data):
     media = data.get("media", {})
     media_type = media.get("media_type", "unknown")
@@ -82,7 +76,7 @@ async def send_request_message(data):
     poster_url = data.get("image", None)
     requester = data.get("request", {}).get("requestedBy_username", "Unknown User")
 
-    details = fetch_media_details(media_type, tmdb_id) if tmdb_id else None
+    details = fetch_media_details(media_type, tmdb_id)
     if not details:
         logging.error(f"Could not fetch details for media with tmdbId: {tmdb_id}")
         return
@@ -95,12 +89,23 @@ async def send_request_message(data):
     score_text = f"{score:.1f}/10 (TMDb)" if score is not None and score > 0 else "Not Rated"
     emoji = "🎬" if media_type == "movie" else "📺"
 
+    external_ids = details.get("externalIds", {})
+    imdb_id = external_ids.get("imdbId")
+    tmdb_id_from_details = external_ids.get("tmdbId")
+    links = []
+    if imdb_id:
+        links.append(f"[IMDb](https://www.imdb.com/title/{imdb_id}/)")
+    if tmdb_id_from_details:
+        links.append(f"[TMDb](https://www.themoviedb.org/{media_type}/{tmdb_id_from_details})")
+    links_text = " | ".join(links)
+
     message = (
         f"{emoji} *New {'Movie' if media_type == 'movie' else 'TV Show'} Request!*\n\n"
         f"*Title:* {title}{year}\n"
         f"*Synopsis:* {overview}\n\n"
         f"*Score:* {score_text}\n"
         f"*Requester:* {requester}\n"
+        f"*Links:* {links_text}\n"
     )
     keyboard = [[
         InlineKeyboardButton("✅ Approve", callback_data=f"approve_{data.get('request', {}).get('request_id')}"),
@@ -113,21 +118,15 @@ async def send_request_message(data):
     else:
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode="Markdown", reply_markup=reply_markup)
 
-# --- Flask Webhook Routes ---
+# --- Flask Webhook Routes (unchanged) ---
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    if request.headers.get("Authorization") != f"Bearer {WEBHOOK_SECRET}":
-        abort(401)
-    
+    if request.headers.get("Authorization") != f"Bearer {WEBHOOK_SECRET}": abort(401)
     data = request.json
     notification_type = data.get("notification_type")
-    
     logging.info(f"Received webhook notification: {notification_type}")
-
     if notification_type == "TEST_NOTIFICATION":
-        logging.info("Test notification received successfully!")
         return "Test notification received!", 200
-
     if notification_type == "MEDIA_PENDING":
         try:
             asyncio.run(send_request_message(data))
@@ -135,7 +134,6 @@ def webhook():
         except Exception as e:
             logging.error(f"Failed to process MEDIA_PENDING notification: {e}")
             return "Error processing notification", 500
-            
     return "OK", 200
 
 @app.route("/health", methods=["GET"])
@@ -146,63 +144,89 @@ def health():
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
-    data = query.data
-
     if user_id not in admins and user_id not in users:
         await query.answer("You are not authorized to approve or deny requests.", show_alert=True)
         return
-
     await query.answer()
 
-    action = "approve" if data.startswith("approve_") else "decline"
-    request_id = data.split("_")[1]
+    action = "approve" if query.data.startswith("approve_") else "decline"
+    request_id = query.data.split("_")[1]
     
     title = "The request"
+    original_requester = "Unknown"
     user_who_clicked = query.from_user.first_name
     if query.message and query.message.caption:
         for line in query.message.caption.split('\n'):
             if "Title:" in line:
-                try:
-                    title = line.split(':', 1)[1].strip()
-                    break
-                except IndexError:
-                    logging.warning(f"Could not parse title from line: {line}")
+                try: title = line.split(':', 1)[1].strip()
+                except IndexError: pass
+            if "Requester:" in line:
+                try: original_requester = line.split(':', 1)[1].strip()
+                except IndexError: pass
 
     success = approve_or_deny_request(request_id, action)
     
     if success:
         action_past_tense = "approved" if action == "approve" else "denied"
         icon = "✅" if action == "approve" else "❌"
-        text = f"{icon} **{title}** was {action_past_tense} by {user_who_clicked}."
+        text = f"{icon} **{title}** (requested by {original_requester}) was {action_past_tense} by {user_who_clicked}."
         await query.message.delete()
         await context.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text, parse_mode="Markdown")
     else:
         text = f"❌ Failed to {action} **{title}**. There might be an issue with Overseerr."
         await query.edit_message_caption(caption=text, reply_markup=None, parse_mode="Markdown")
 
+# --- NEW: Command to generate a password hash ---
+async def generate_hash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type != 'private':
+        await update.message.reply_text("For security, please send this command as a private message to the bot.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /generatehash <your-password>")
+        return
+    
+    password = " ".join(context.args)
+    hashed_password = generate_password_hash(password)
+    
+    reply_text = (
+        "Your secure password hash is:\n\n"
+        f"`{hashed_password}`\n\n"
+        "Copy this entire hash and set it as the `ADMIN_PASSWORD_HASH` environment variable for the bot, then restart it."
+    )
+    await update.message.reply_text(reply_text, parse_mode="Markdown")
+
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    args = context.args
-    if not args or args[0] != ADMIN_PASSWORD:
+    if not ADMIN_PASSWORD_HASH:
+        await update.message.reply_text("❌ Admin password has not been set by the administrator.")
+        return
+    if not context.args or not check_password_hash(ADMIN_PASSWORD_HASH, " ".join(context.args)):
         await update.message.reply_text("❌ Incorrect password.")
         return
     admins.add(user_id)
     save_ids(ADMINS_FILE, admins)
     await update.message.reply_text("✅ You are now an admin!")
 
-async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def adduser_reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id in admins:
-        admins.remove(user_id)
-        save_ids(ADMINS_FILE, admins)
-        await update.message.reply_text("✅ You have been logged out as admin.")
-    elif user_id in users:
-        users.remove(user_id)
-        save_ids(USERS_FILE, users)
-        await update.message.reply_text("✅ You have been logged out as user.")
-    else:
-        await update.message.reply_text("You are not logged in.")
+    if user_id not in admins:
+        await update.message.reply_text("❌ Only admins can use this command.")
+        return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Usage: Reply to a user's message with the /add command to add them.")
+        return
+    user_to_add = update.message.reply_to_message.from_user
+    new_user_id = user_to_add.id
+    new_user_name = user_to_add.first_name
+    if new_user_id in users:
+        await update.message.reply_text(f"✅ User {new_user_name} is already an authorized user.")
+        return
+    users.add(new_user_id)
+    save_ids(USERS_FILE, users)
+    await update.message.reply_text(f"✅ User {new_user_name} ({new_user_id}) has been added.")
 
+# ... (other commands are unchanged) ...
 async def adduser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in admins:
@@ -219,6 +243,19 @@ async def adduser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ User {new_user_id} added.")
     except Exception:
         await update.message.reply_text("Invalid user_id.")
+
+async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in admins:
+        admins.remove(user_id)
+        save_ids(ADMINS_FILE, admins)
+        await update.message.reply_text("✅ You have been logged out as admin.")
+    elif user_id in users:
+        users.remove(user_id)
+        save_ids(USERS_FILE, users)
+        await update.message.reply_text("✅ You have been logged out as user.")
+    else:
+        await update.message.reply_text("You are not logged in.")
 
 async def removeuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -259,8 +296,10 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Main Application Startup ---
 def start_telegram_bot():
-    """This function is called by start.sh to run the Telegram bot."""
     app_telegram = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    # --- UPDATED: Register the new /generatehash command ---
+    app_telegram.add_handler(CommandHandler("generatehash", generate_hash_command))
+    app_telegram.add_handler(CommandHandler("add", adduser_reply_command))
     app_telegram.add_handler(CallbackQueryHandler(button_handler))
     app_telegram.add_handler(CommandHandler("login", login_command))
     app_telegram.add_handler(CommandHandler("logout", logout_command))
