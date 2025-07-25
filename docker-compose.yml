@@ -3,6 +3,8 @@ services:
     container_name: overseerr-telegram-approver
     image: xnotorious/overseerr-telegram-approver
     restart: unless-stopped
+    volumes:
+      - ./data:app/data
     ports:
       - "8080:8080"
     environment:
@@ -12,3 +14,6 @@ services:
       OVERSEERR_API_KEY: "your-overseerr-api-key"
       WEBHOOK_SECRET: "your-webhook-secret"
       PORT: 8080
+      ADMIN_PASSWORD: "your-admin-password"
+      ADMINS_FILE: "data/admins.json"
+      USERS_FILE: "data/users.json"
