@@ -58,34 +58,39 @@ def get_imdb_link(imdb_id):
 async def send_request_message(data):
     media = data.get("media", {})
     media_type = media.get("media_type", "unknown")
-    title = data.get("subject", "Unknown Title")
-    year = media.get("releaseDate", "")[:4] if media.get("releaseDate") else ""
+    title = data.get("title") or data.get("subject", "Unknown Title")
     overview = media.get("overview", "")
-    tmdb_id = media.get("tmdbId", "")
-    imdb_id = media.get("imdbId", "")
-    requester = data.get("request", {}).get("requestedBy_username", "Unknown User")
     poster_url = data.get("image", None)
-    request_id = data.get("request", {}).get("request_id")
+    requester = data.get("request", {}).get("requestedBy_username", "Unknown User")
+    imdb_id = media.get("imdbId", "")
+    imdb_score = None
 
-    tmdb_link = get_tmdb_link(media_type, tmdb_id)
-    imdb_link = get_imdb_link(imdb_id)
+    # Try to get IMDb score from ratings, fallback to TMDB score
+    ratings = media.get("ratings", {})
+    if ratings and "imdb" in ratings and "value" in ratings["imdb"]:
+        imdb_score = ratings["imdb"]["value"]
+    elif "voteAverage" in media:
+        imdb_score = media["voteAverage"]
 
+    # Emoji for movie or TV
+    emoji = "🎬" if media_type == "movie" else "📺"
+
+    # Build message
     message = (
-        f"🎬 *New {media_type.title()} Request!*\n"
-        f"*Title:* {title} ({year})\n"
-        f"*Requested by:* {requester}\n"
+        f"{emoji} *New {'Movie' if media_type == 'movie' else 'TV Show'} Request!*\n"
+        f"*Title:* {title}\n"
     )
     if overview:
-        message += f"\n_{overview}_\n"
-    if tmdb_link:
-        message += f"\n[TMDB]({tmdb_link})"
-    if imdb_link:
-        message += f" | [IMDB]({imdb_link})"
+        message += f"*Synopsis:* {overview}\n"
+    if imdb_score is not None:
+        message += f"*Score:* {imdb_score}/10\n"
+    if requester:
+        message += f"*Requester:* {requester}\n"
 
     keyboard = [
         [
-            InlineKeyboardButton("✅ Approve", callback_data=f"approve_{request_id}"),
-            InlineKeyboardButton("❌ Deny", callback_data=f"deny_{request_id}")
+            InlineKeyboardButton("✅ Approve", callback_data=f"approve_{data.get('request', {}).get('request_id')}"),
+            InlineKeyboardButton("❌ Deny", callback_data=f"deny_{data.get('request', {}).get('request_id')}")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
