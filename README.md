@@ -82,9 +82,9 @@ docker run -d \
 This bot uses a secure hashed password so your actual password is never stored.
 
 1.  Start the bot container for the first time.
-2.  Send your bot a **private message** (not in a group) with your desired password. For example:
+2.  Send your bot a **private message** (not in a group, this is also not possible, the bot will not send a hashed password back) with your desired password. For example:
     `/generatehash my super secret password`
-3.  The bot will reply with a long string of text (the hash). Copy this entire string.
+3.  The bot will reply with a long string of text (the hash). Copy this entire string. The hashed password might containe characters as $ or :. If you use a .env file, make sure to save your hashed password within single quotes like this: ```'supersafe:hashed$password'```
 4.  Stop the bot container.
 5.  In your `.env` file or `docker run` command, set the copied hash as the value for the `ADMIN_PASSWORD_HASH` environment variable.
 6.  Restart the bot container. It is now securely configured.
