@@ -40,6 +40,12 @@ Admins can manage who is allowed to approve/deny requests, all from Telegram.
         ADMIN_PASSWORD_HASH: "your-admin-password"
         ADMINS_FILE: "data/admins.json"
         USERS_FILE: "data/users.json"
+      healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+        interval: 1m30s
+        timeout: 10s
+        retries: 3
+        start_period: 40s
    ```
 > **IMPORTANT:** When you paste your `ADMIN_PASSWORD_HASH` into the `.env` file, you **must** wrap it in single quotes (`'`). This is because the hash contains special characters (`$`) that will otherwise break the configuration.
 
@@ -86,7 +92,7 @@ This bot uses a secure hashed password so your actual password is never stored.
 1.  Start the bot container for the first time.
 2.  Send your bot a **private message** (not in a group, this is also not possible, the bot will not send a hashed password back) with your desired password. For example:
     `/generatehash my super secret password`
-3.  The bot will reply with a long string of text (the hash). Copy this entire string. The hashed password might containe characters as $ or :. If you use a .env file, make sure to save your hashed password within single quotes like this: ```'supersafe:hashed$password'```
+3.  The bot will reply with a long string of text (the hash). Copy this entire string. The hashed password might contain characters as $ or :. If you use a .env file, make sure to save your hashed password within single quotes like this: ```'supersafe:hashed$password'```
 4.  Stop the bot container.
 5.  In your `.env` file or `docker run` command, set the copied hash as the value for the `ADMIN_PASSWORD_HASH` environment variable.
 6.  Restart the bot container. It is now securely configured.
@@ -205,4 +211,6 @@ Contributions are welcome!
 
 ---
 ## License
-This project is licensed under the MIT License. See the [LICENSE](https://github.com/bverwijst/OverseerrTelegramApproval/blob/main/LICENSE) file for details
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/bverwijst/OverseerrTelegramApproval/blob/main/LICENSE) file for details.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Docker Pulls](https://img.shields.io/docker/pulls/xnotorious/overseerr-telegram-approver.svg)](https://hub.docker.com/r/xnotorious/overseerr-telegram-approver)
