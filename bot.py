@@ -180,30 +180,39 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action:
         request_id = data.split("_")[1]
         
-        # Grab the title from the original message caption
-        title = "The request" # Default title
+        # --- CORRECTED & MORE ROBUST TITLE PARSING ---
+        # Default title in case parsing fails for some reason
+        title = "The request" 
+        # Get the name of the user who clicked the button
+        user_who_clicked = query.from_user.first_name
+
         if query.message and query.message.caption:
             for line in query.message.caption.split('\n'):
-                if line.startswith("*Title:*"):
-                    title = line.replace("*Title:*", "").strip()
-                    break
-
-        # --- NEW: Get the name of the user who clicked the button ---
-        user_who_clicked = query.from_user.first_name
+                # Look for "Title:" in the line, which is more reliable than checking for asterisks
+                if "Title:" in line:
+                    try:
+                        # Split the line at the first colon and take the second part
+                        title_part = line.split(':', 1)[1]
+                        # Strip any leading/trailing whitespace from the title
+                        title = title_part.strip()
+                        # We found the title, so we can stop looking
+                        break 
+                    except IndexError:
+                        # This handles a malformed line that contains "Title:" but no actual title
+                        logging.warning(f"Found a line with 'Title:' but could not parse it: {line}")
+        # --- END CORRECTION ---
 
         success = approve_or_deny_request(request_id, action)
         
         if success:
             action_past_tense = "approved" if action == "approve" else "denied"
-            
-            # --- UPDATED: Final message now includes title and user's name ---
             icon = "✅" if action == "approve" else "❌"
+            
+            # The final message now correctly includes the parsed title
             text = f"{icon} **{title}** was {action_past_tense} by {user_who_clicked}."
 
             try:
-                # Delete the original request message
                 await query.message.delete()
-                # Send the new, detailed confirmation message
                 await context.bot.send_message(
                     chat_id=TELEGRAM_CHAT_ID,
                     text=text,
@@ -211,10 +220,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as e:
                 logging.error(f"Error during message delete/send: {e}")
-                # Fallback if deletion fails
                 await context.bot.send_message(chat_id=user_id, text=f"Action for {title} succeeded, but there was an error cleaning up the message in the channel.")
         else:
-            # On failure, edit the original message to show the error
             text = f"❌ Failed to {action} **{title}**. There might be an issue with Overseerr."
             try:
                 await query.edit_message_caption(caption=text, reply_markup=None, parse_mode="Markdown")
