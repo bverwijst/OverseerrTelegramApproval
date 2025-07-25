@@ -172,7 +172,7 @@ You can use this bot in a group chat instead of (or in addition to) direct messa
 | OVERSEERR_API_KEY  | Your Overseerr API key                                      |
 | WEBHOOK_SECRET     | Secret for webhook authentication (must match Overseerr)    |
 | PORT               | Port to run the bot on (default: 8080)                      |
-| ADMIN_PASSWORD     | Your Admin password                                         |
+| ADMIN_PASSWORD_HASH| Your Admin password                                         |
 | ADMINS_FILE        | Persistent storage for Admin ID's (data/admins.json)        |
 | USERS_FILE         | Persistent storage for User ID's (data/users.json)          |
 
