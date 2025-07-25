@@ -18,7 +18,7 @@ services:
       ADMINS_FILE: "data/admins.json"
       USERS_FILE: "data/users.json"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "python", "-c", "import sys, http.client; conn = http.client.HTTPConnection('localhost', 8080); conn.request('GET', '/health'); sys.exit(0) if conn.getresponse().status == 200 else sys.exit(1)"]
       interval: 1m30s
       timeout: 10s
       retries: 3
