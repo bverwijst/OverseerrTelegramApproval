@@ -244,18 +244,27 @@ async def adduser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("Invalid user_id.")
 
-async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Ensure this command is only used in a private chat
+    if update.message.chat.type != 'private':
+        await update.message.reply_text("For security, please use the /login command in a private message to the bot.")
+        return
+
     user_id = update.effective_user.id
-    if user_id in admins:
-        admins.remove(user_id)
-        save_ids(ADMINS_FILE, admins)
-        await update.message.reply_text("✅ You have been logged out as admin.")
-    elif user_id in users:
-        users.remove(user_id)
-        save_ids(USERS_FILE, users)
-        await update.message.reply_text("✅ You have been logged out as user.")
-    else:
-        await update.message.reply_text("You are not logged in.")
+    password_attempt = " ".join(context.args)
+
+    if not ADMIN_PASSWORD_HASH:
+        await update.message.reply_text("❌ Admin password has not been set by the administrator.")
+        return
+    
+    # Check if a password was provided and if it matches the hash
+    if not password_attempt or not check_password_hash(ADMIN_PASSWORD_HASH, password_attempt):
+        await update.message.reply_text("❌ Incorrect password.")
+        return
+        
+    admins.add(user_id)
+    save_ids(ADMINS_FILE, admins)
+    await update.message.reply_text("✅ You are now an admin! You can now use admin commands in the group channel.")
 
 async def removeuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
