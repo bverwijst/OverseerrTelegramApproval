@@ -36,7 +36,7 @@ Admins can manage who is allowed to approve/deny requests, all from Telegram.
         OVERSEERR_API_KEY: "your-overseerr-api-key"
         WEBHOOK_SECRET: "your-webhook-secret"
         PORT: 8080
-        ADMIN_PASSWORD: "your-admin-password"
+        ADMIN_PASSWORD_HASH: "your-admin-password"
         ADMINS_FILE: "data/admins.json"
         USERS_FILE: "data/users.json"
    ```
@@ -188,7 +188,7 @@ This bot is designed to be foolproof. On startup, it checks all required environ
 
 Webhook authentication issues are also clearly logged, so you’ll know if the secret is missing or incorrect.
 
-Check your container logs for any issues—setup problems will be obvious and easy to fix!
+Check your container logs for any issues, setup problems will be obvious and easy to fix!
 
 ---
 ## Contributing
