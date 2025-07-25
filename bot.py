@@ -160,53 +160,72 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Only allow users or admins to approve/deny
     if user_id not in admins and user_id not in users:
-        # Try to send a visible reply in the chat (group or private)
-        try:
-            if query.message:
-                await query.message.reply_text(
-                    "❌ Sorry, you are not authorized to approve or deny requests. Ask an admin to add you."
-                )
-        except Exception:
-            pass
-        # Also send a popup alert (works in private chat, sometimes in groups)
         try:
             await query.answer(
-                "You are not authorized. Ask an admin to add you.",
+                "You are not authorized to approve or deny requests. Ask an admin to add you.",
                 show_alert=True
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"Could not send unauthorized alert: {e}")
         return
 
-    await query.answer()  # Acknowledge the button press for authorized users
+    # Acknowledge the button press immediately for a responsive feel
+    await query.answer()
 
     action = None
     if data.startswith("approve_"):
         action = "approve"
     elif data.startswith("deny_"):
+        # Note: The Overseerr API uses 'decline' for denials
         action = "decline"
 
     if action:
         request_id = data.split("_")[1]
-        success = approve_or_deny_request(request_id, action)
-        # Try to get the title from the original message
-        title = "Request"
+        
+        # --- GRAB TITLE BEFORE DELETING ---
+        # Extract the title from the original message caption to use in our new message.
+        title = "The request" # Default title
         try:
-            if query.message.caption:
+            if query.message and query.message.caption:
                 for line in query.message.caption.split('\n'):
                     if line.startswith("*Title:*"):
+                        # Clean up the title string from markdown and extra spaces
                         title = line.replace("*Title:*", "").strip()
                         break
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"Could not parse title from message: {e}")
+
+        # --- PERFORM ACTION ---
+        success = approve_or_deny_request(request_id, action)
+        
         if success:
-            text = f"✅ {title} approved!" if action == "approve" else f"❌ {title} denied!"
+            # --- "DUST EFFECT" LOGIC ---
+            # On success, delete the original message and send a new one.
+            action_past_tense = "approved" if action == "approve" else "denied"
+            text = f"✅ **{title}** has been {action_past_tense}."
+            try:
+                # 1. Delete the original message (photo with buttons)
+                await query.message.delete()
+                # 2. Send a new, clean confirmation message
+                await context.bot.send_message(
+                    chat_id=TELEGRAM_CHAT_ID,
+                    text=text,
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logging.error(f"Error during message delete/send: {e}")
+                # Fallback if deletion fails: just notify the user who clicked.
+                await context.bot.send_message(chat_id=user_id, text=f"Action for {title} succeeded, but there was an error cleaning up the message in the channel.")
         else:
-            text = f"❌ Failed to {action} {title}."
-        try:
-            await query.edit_message_caption(caption=text, reply_markup=None)
-        except Exception:
-            await query.edit_message_text(text=text, reply_markup=None)
+            # --- FAILURE LOGIC ---
+            # If the API call fails, don't delete. Just edit the message to show the error.
+            text = f"❌ Failed to {action} **{title}**. There might be an issue with Overseerr."
+            try:
+                # Edit the original message to show the failure without removing it
+                await query.edit_message_caption(caption=text, reply_markup=None, parse_mode="Markdown")
+            except Exception:
+                # Fallback for text-only messages
+                await query.edit_message_text(text=text, reply_markup=None, parse_mode="Markdown")
 
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
