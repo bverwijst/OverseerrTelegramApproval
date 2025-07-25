@@ -1,6 +1,5 @@
 import os
 import logging
-import threading
 import asyncio
 import json
 from flask import Flask, request, abort
@@ -11,23 +10,22 @@ import requests
 from dotenv import load_dotenv
 load_dotenv()
 
+# --- Environment Variables ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OVERSEERR_API_URL = os.getenv("OVERSEERR_API_URL")
 OVERSEERR_API_KEY = os.getenv("OVERSEERR_API_KEY")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-PORT = int(os.getenv("PORT", 8080))
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "adminpass")
 ADMINS_FILE = os.getenv("ADMINS_FILE", "admins.json")
 USERS_FILE = os.getenv("USERS_FILE", "users.json")
 
+# --- Initializations ---
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 app = Flask(__name__)
-
 logging.basicConfig(level=logging.INFO)
 
-telegram_event_loop = None
-
+# --- Helper Functions for User/Admin Management ---
 def load_ids(filename):
     if os.path.exists(filename):
         with open(filename, "r") as f:
@@ -41,6 +39,7 @@ def save_ids(filename, ids):
 admins = load_ids(ADMINS_FILE)
 users = load_ids(USERS_FILE)
 
+# --- Overseerr API Functions ---
 def fetch_media_details(media_type, tmdb_id):
     if not tmdb_id or not media_type:
         return None
@@ -51,96 +50,8 @@ def fetch_media_details(media_type, tmdb_id):
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        print(f"Error fetching media details: {e}")
+        logging.error(f"Error fetching media details: {e}")
         return None
-
-async def send_request_message(data):
-    # Get basic info from webhook to find the media
-    media = data.get("media", {})
-    media_type = media.get("media_type", "unknown")
-    tmdb_id = media.get("tmdbId")
-    poster_url = data.get("image", None)
-    requester = data.get("request", {}).get("requestedBy_username", "Unknown User")
-
-    # The webhook payload is minimal, so we must fetch full details from the API
-    details = fetch_media_details(media_type, tmdb_id) if tmdb_id else None
-
-    # If we couldn't fetch details, we can't build a proper message
-    if not details:
-        logging.error(f"Could not fetch details for media with tmdbId: {tmdb_id}")
-        return
-
-    # --- CORRECTED SECTION ---
-    # Extract rich details from the full API response
-    # Movie titles are in 'title', TV show titles are in 'name'
-    title = details.get("title") if media_type == "movie" else details.get("name", "Unknown Title")
-    
-    # Use the full overview from the details
-    overview = details.get("overview", "No synopsis available.")
-    
-    # Get year from 'releaseDate' (movies) or 'firstAirDate' (tv)
-    release_date = details.get("releaseDate") if media_type == "movie" else details.get("firstAirDate")
-    year = f" ({release_date[:4]})" if release_date and len(release_date) >= 4 else ""
-
-    # Get score from 'voteAverage' (this is the TMDb score)
-    score = details.get("voteAverage")
-    score_text = f"{score:.1f}/10 (TMDb)" if score is not None and score > 0 else "Not Rated"
-    # --- END CORRECTED SECTION ---
-
-    emoji = "🎬" if media_type == "movie" else "📺"
-
-    message = (
-        f"{emoji} *New {'Movie' if media_type == 'movie' else 'TV Show'} Request!*\n\n"
-        f"*Title:* {title}{year}\n"
-        f"*Synopsis:* {overview}\n\n"
-        f"*Score:* {score_text}\n"
-        f"*Requester:* {requester}\n"
-    )
-
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Approve", callback_data=f"approve_{data.get('request', {}).get('request_id')}"),
-            InlineKeyboardButton("❌ Deny", callback_data=f"deny_{data.get('request', {}).get('request_id')}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if poster_url:
-        await bot.send_photo(
-            chat_id=TELEGRAM_CHAT_ID,
-            photo=poster_url,
-            caption=message,
-            parse_mode="Markdown",
-            reply_markup=reply_markup
-        )
-    else:
-        await bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
-            text=message,
-            parse_mode="Markdown",
-            reply_markup=reply_markup
-        )
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    if request.headers.get("Authorization") != f"Bearer {WEBHOOK_SECRET}":
-        abort(401)
-    data = request.json
-    if data.get("type") == "TEST_NOTIFICATION":
-        return "Test notification received!", 200
-
-    if (
-        data.get("notification_type") == "MEDIA_PENDING"
-        or data.get("event") in ["New Movie Request", "New TV Request"]
-    ):
-        global telegram_event_loop
-        if telegram_event_loop:
-            asyncio.run_coroutine_threadsafe(send_request_message(data), telegram_event_loop)
-    return "OK"
-
-@app.route("/health", methods=["GET"])
-def health():
-    return "OK", 200
 
 def approve_or_deny_request(request_id, action):
     url = f"{OVERSEERR_API_URL}/request/{request_id}/{action}"
@@ -150,98 +61,128 @@ def approve_or_deny_request(request_id, action):
         response.raise_for_status()
         return True
     except Exception as e:
-        print(f"Error approving/denying request: {e}")
+        logging.error(f"Error approving/denying request: {e}")
         return False
 
+# --- Core Telegram Message Functions ---
+async def send_request_message(data):
+    media = data.get("media", {})
+    media_type = media.get("media_type", "unknown")
+    tmdb_id = media.get("tmdbId")
+    poster_url = data.get("image", None)
+    requester = data.get("request", {}).get("requestedBy_username", "Unknown User")
+
+    details = fetch_media_details(media_type, tmdb_id) if tmdb_id else None
+    if not details:
+        logging.error(f"Could not fetch details for media with tmdbId: {tmdb_id}")
+        return
+
+    title = details.get("title") if media_type == "movie" else details.get("name", "Unknown Title")
+    overview = details.get("overview", "No synopsis available.")
+    release_date = details.get("releaseDate") if media_type == "movie" else details.get("firstAirDate")
+    year = f" ({release_date[:4]})" if release_date and len(release_date) >= 4 else ""
+    score = details.get("voteAverage")
+    score_text = f"{score:.1f}/10 (TMDb)" if score is not None and score > 0 else "Not Rated"
+    emoji = "🎬" if media_type == "movie" else "📺"
+
+    message = (
+        f"{emoji} *New {'Movie' if media_type == 'movie' else 'TV Show'} Request!*\n\n"
+        f"*Title:* {title}{year}\n"
+        f"*Synopsis:* {overview}\n\n"
+        f"*Score:* {score_text}\n"
+        f"*Requester:* {requester}\n"
+    )
+    keyboard = [[
+        InlineKeyboardButton("✅ Approve", callback_data=f"approve_{data.get('request', {}).get('request_id')}"),
+        InlineKeyboardButton("❌ Deny", callback_data=f"deny_{data.get('request', {}).get('request_id')}")
+    ]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if poster_url:
+        await bot.send_photo(chat_id=TELEGRAM_CHAT_ID, photo=poster_url, caption=message, parse_mode="Markdown", reply_markup=reply_markup)
+    else:
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode="Markdown", reply_markup=reply_markup)
+
+# --- Flask Webhook Routes ---
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    if request.headers.get("Authorization") != f"Bearer {WEBHOOK_SECRET}":
+        abort(401)
+    
+    data = request.json
+    notification_type = data.get("notification_type")
+    
+    logging.info(f"Received webhook notification: {notification_type}")
+
+    if notification_type == "TEST_NOTIFICATION":
+        logging.info("Test notification received successfully!")
+        return "Test notification received!", 200
+
+    if notification_type == "MEDIA_PENDING":
+        try:
+            # --- THIS IS THE KEY CHANGE ---
+            # Run the async function in its own event loop. No need for global variables.
+            asyncio.run(send_request_message(data))
+            logging.info("Successfully processed MEDIA_PENDING notification.")
+        except Exception as e:
+            logging.error(f"Failed to process MEDIA_PENDING notification: {e}")
+            return "Error processing notification", 500
+            
+    return "OK", 200
+
+@app.route("/health", methods=["GET"])
+def health():
+    return "OK", 200
+
+# --- Telegram Bot Handlers ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
 
-    # Only allow users or admins to approve/deny
     if user_id not in admins and user_id not in users:
-        try:
-            await query.answer(
-                "You are not authorized to approve or deny requests. Ask an admin to add you.",
-                show_alert=True
-            )
-        except Exception as e:
-            logging.warning(f"Could not send unauthorized alert: {e}")
+        await query.answer("You are not authorized to approve or deny requests.", show_alert=True)
         return
 
     await query.answer()
 
-    action = None
-    if data.startswith("approve_"):
-        action = "approve"
-    elif data.startswith("deny_"):
-        action = "decline"
+    action = "approve" if data.startswith("approve_") else "decline"
+    request_id = data.split("_")[1]
+    
+    title = "The request"
+    user_who_clicked = query.from_user.first_name
+    if query.message and query.message.caption:
+        for line in query.message.caption.split('\n'):
+            if "Title:" in line:
+                try:
+                    title = line.split(':', 1)[1].strip()
+                    break
+                except IndexError:
+                    logging.warning(f"Could not parse title from line: {line}")
 
-    if action:
-        request_id = data.split("_")[1]
-        
-        # --- CORRECTED & MORE ROBUST TITLE PARSING ---
-        # Default title in case parsing fails for some reason
-        title = "The request" 
-        # Get the name of the user who clicked the button
-        user_who_clicked = query.from_user.first_name
-
-        if query.message and query.message.caption:
-            for line in query.message.caption.split('\n'):
-                # Look for "Title:" in the line, which is more reliable than checking for asterisks
-                if "Title:" in line:
-                    try:
-                        # Split the line at the first colon and take the second part
-                        title_part = line.split(':', 1)[1]
-                        # Strip any leading/trailing whitespace from the title
-                        title = title_part.strip()
-                        # We found the title, so we can stop looking
-                        break 
-                    except IndexError:
-                        # This handles a malformed line that contains "Title:" but no actual title
-                        logging.warning(f"Found a line with 'Title:' but could not parse it: {line}")
-        # --- END CORRECTION ---
-
-        success = approve_or_deny_request(request_id, action)
-        
-        if success:
-            action_past_tense = "approved" if action == "approve" else "denied"
-            icon = "✅" if action == "approve" else "❌"
-            
-            # The final message now correctly includes the parsed title
-            text = f"{icon} **{title}** was {action_past_tense} by {user_who_clicked}."
-
-            try:
-                await query.message.delete()
-                await context.bot.send_message(
-                    chat_id=TELEGRAM_CHAT_ID,
-                    text=text,
-                    parse_mode="Markdown"
-                )
-            except Exception as e:
-                logging.error(f"Error during message delete/send: {e}")
-                await context.bot.send_message(chat_id=user_id, text=f"Action for {title} succeeded, but there was an error cleaning up the message in the channel.")
-        else:
-            text = f"❌ Failed to {action} **{title}**. There might be an issue with Overseerr."
-            try:
-                await query.edit_message_caption(caption=text, reply_markup=None, parse_mode="Markdown")
-            except Exception:
-                await query.edit_message_text(text=text, reply_markup=None, parse_mode="Markdown")
+    success = approve_or_deny_request(request_id, action)
+    
+    if success:
+        action_past_tense = "approved" if action == "approve" else "denied"
+        icon = "✅" if action == "approve" else "❌"
+        text = f"{icon} **{title}** was {action_past_tense} by {user_who_clicked}."
+        await query.message.delete()
+        await context.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text, parse_mode="Markdown")
+    else:
+        text = f"❌ Failed to {action} **{title}**. There might be an issue with Overseerr."
+        await query.edit_message_caption(caption=text, reply_markup=None, parse_mode="Markdown")
 
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     args = context.args
-    if not args:
-        await update.message.reply_text("Usage: /login <admin_password>")
-        return
-    pw = args[0]
-    if pw == ADMIN_PASSWORD:
-        admins.add(user_id)
-        save_ids(ADMINS_FILE, admins)
-        await update.message.reply_text("✅ You are now an admin!")
-    else:
+    if not args or args[0] != ADMIN_PASSWORD:
         await update.message.reply_text("❌ Incorrect password.")
+        return
+    admins.add(user_id)
+    save_ids(ADMINS_FILE, admins)
+    await update.message.reply_text("✅ You are now an admin!")
 
+# ... (other command handlers like logout, adduser, etc. are unchanged) ...
 async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in admins:
@@ -309,8 +250,9 @@ async def listadmins_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot is running and healthy!")
 
+# --- Main Application Startup ---
 def start_telegram_bot():
-    global telegram_event_loop
+    """This function is called by start.sh to run the Telegram bot."""
     app_telegram = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app_telegram.add_handler(CallbackQueryHandler(button_handler))
     app_telegram.add_handler(CommandHandler("login", login_command))
@@ -320,13 +262,11 @@ def start_telegram_bot():
     app_telegram.add_handler(CommandHandler("listusers", listusers_command))
     app_telegram.add_handler(CommandHandler("listadmins", listadmins_command))
     app_telegram.add_handler(CommandHandler("health", health_command))
-    telegram_event_loop = asyncio.get_event_loop()
     app_telegram.run_polling()
 
+# --- This block is no longer needed for starting the app ---
+# The start.sh script now handles running Gunicorn and the bot.
+# It's kept here in case you ever want to run the bot directly for local testing.
 if __name__ == "__main__":
-    def run_flask():
-        app.run(host="0.0.0.0", port=PORT)
-
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
+    print("Starting Telegram bot directly for local testing...")
     start_telegram_bot()
