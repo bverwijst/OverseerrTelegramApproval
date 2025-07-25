@@ -141,13 +141,29 @@ def approve_or_deny_request(request_id, action):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
-    await query.answer()
     data = query.data
 
     # Only allow users or admins to approve/deny
     if user_id not in admins and user_id not in users:
-        await query.answer("You are not authorized. Ask an admin to add you.", show_alert=True)
+        # Try to send a visible reply in the chat (group or private)
+        try:
+            if query.message:
+                await query.message.reply_text(
+                    "❌ Sorry, you are not authorized to approve or deny requests. Ask an admin to add you."
+                )
+        except Exception:
+            pass
+        # Also send a popup alert (works in private chat, sometimes in groups)
+        try:
+            await query.answer(
+                "You are not authorized. Ask an admin to add you.",
+                show_alert=True
+            )
+        except Exception:
+            pass
         return
+
+    await query.answer()  # Acknowledge the button press for authorized users
 
     action = None
     if data.startswith("approve_"):
