@@ -1,23 +1,36 @@
 FROM python:3.11-slim
 
+# Set working directory
 WORKDIR /app
 
-# Copy requirements and install dependencies
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
 COPY requirements.txt .
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application files
+# Copy application files
 COPY bot.py .
 COPY start.sh .
+COPY message_config.yml .
 
-# Ensure the start script is executable
-RUN chmod +x ./start.sh
+# Make start.sh executable
+RUN chmod +x start.sh
 
-# Expose the port Gunicorn will run on
-EXPOSE 8080
+# Create data directory
+RUN mkdir -p data
 
-# Set python to print logs immediately
-ENV PYTHONUNBUFFERED=1
+# Expose port for webhook
+EXPOSE 5000
 
-# Run the start.sh script when the container launches
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
+
+# Run the start script
 CMD ["./start.sh"]
