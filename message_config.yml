@@ -1,0 +1,64 @@
+message_format:
+  enabled_fields:
+  - picture
+  - title
+  - requester
+  - synopsis
+  - rating
+  - links
+  - cast
+  - crew
+  field_order:
+  - picture
+  - title
+  - requester
+  - synopsis
+  - rating
+  - links
+  - cast
+  - crew
+  field_settings:
+    cast:
+      enabled: true
+      format: 'Cast: {cast_list}'
+      max_items: 5
+      separator: ', '
+    crew:
+      enabled: false
+      format: 'Crew: {crew_list}'
+      max_items: 3
+      roles:
+      - Director
+      - Producer
+      - Writer
+      separator: ', '
+    links:
+      enabled: true
+      show_imdb: true
+      show_tmdb: true
+      show_tvdb: false
+    picture:
+      enabled: true
+      fallback_emoji: "\U0001F3AC"
+    rating:
+      enabled: true
+      fallback: Not Rated
+      show_imdb: false
+      show_tmdb: true
+    requester:
+      enabled: true
+      format: 'Requested by: {username}'
+    synopsis:
+      enabled: true
+      fallback: No synopsis available.
+      max_length: 300
+    title:
+      enabled: true
+      movie_emoji: "\U0001F3AC"
+      show_emoji: true
+      show_year: true
+      tv_emoji: "\U0001F4FA"
+settings:
+  auto_reload_config: true
+  config_check_interval: 5
+  debug_mode: false
