@@ -6,6 +6,7 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -19,8 +20,8 @@ COPY bot.py .
 COPY start.sh .
 COPY message_config.yml .
 
-# Make start.sh executable
-RUN chmod +x start.sh
+# Fix line endings and make start.sh executable
+RUN dos2unix start.sh && chmod +x start.sh
 
 # Create data directory
 RUN mkdir -p data
